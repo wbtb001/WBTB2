@@ -1,7 +1,7 @@
 
 # ============================================================
 # weDownloader_v11.py
-#111
+#
 # We Plus Downloader - GUI Version
 #
 # Requirements:
@@ -14,6 +14,14 @@
 # ============================================================
 # CHANGELOG
 # ============================================================
+#
+# v12
+# - Fix window close button (X): always closes immediately.
+# - Add cancellation support: on_close sets cancel_event, stops
+#   managed Proxy, joins worker thread (max 3 s), then destroys.
+# - Worker threads (load/download) check cancel_event at each
+#   loop level and exit cleanly.
+# - External Proxy is never terminated on exit.
 #
 # v11
 # - Load Token API credentials from wefileuser.txt beside the script.
@@ -445,6 +453,11 @@ class DownloaderApp:
 
         self.download_running = False
         self.load_running = False
+
+        # v12: Cancellation support so the window can always close
+        self.cancel_event = threading.Event()
+        self.worker_thread = None
+        self.closing = False
 
         self.courses = []
 
@@ -1138,11 +1151,13 @@ class DownloaderApp:
             text="กำลังโหลดรายการคอร์ส..."
         )
 
-        threading.Thread(
+        self.cancel_event.clear()
+        self.worker_thread = threading.Thread(
             target=self._load_courses_worker,
             args=(level_name, level_slug),
             daemon=True
-        ).start()
+        )
+        self.worker_thread.start()
 
 
     def _load_courses_worker(self, level_name, level_slug):
@@ -1154,6 +1169,13 @@ class DownloaderApp:
             total_pages = 1
 
             while page <= total_pages:
+
+                if self.cancel_event.is_set():
+                    self.log(
+                        "ยกเลิกการโหลดรายการคอร์ส"
+                    )
+                    break
+
                 self.log(
                     f"กำลังโหลดคอร์สระดับ {level_name} "
                     f"หน้า {page}/{total_pages} ..."
@@ -1182,46 +1204,58 @@ class DownloaderApp:
                 )
                 page += 1
 
-            self.root.after(
-                0,
-                self._populate_courses,
-                courses,
-                level_name
-            )
+            if not self.closing:
 
-            self.log(
-                f"โหลดคอร์สระดับ {level_name} สำเร็จ "
-                f"{len(courses)} รายการ"
-            )
+                self.root.after(
+                    0,
+                    self._populate_courses,
+                    courses,
+                    level_name
+                )
+
+            if not self.closing:
+
+                self.log(
+                    f"โหลดคอร์สระดับ {level_name} สำเร็จ "
+                    f"{len(courses)} รายการ"
+                )
 
         except Exception as exc:
 
             error_message = str(exc)
 
-            self.log(
-                f"โหลดรายการคอร์สไม่สำเร็จ: {error_message}"
-            )
+            if not self.closing:
 
-            self.root.after(
-                0,
-                lambda: self.course_count.configure(
-                    text="โหลดรายการคอร์สไม่สำเร็จ"
+                self.log(
+                    f"โหลดรายการคอร์สไม่สำเร็จ: {error_message}"
                 )
-            )
 
-            self.root.after(
-                0,
-                lambda message=error_message: messagebox.showerror(
-                    "เกิดข้อผิดพลาด", message
+            if not self.closing:
+
+                self.root.after(
+                    0,
+                    lambda: self.course_count.configure(
+                        text="โหลดรายการคอร์สไม่สำเร็จ"
+                    )
                 )
-            )
+
+            if not self.closing:
+
+                self.root.after(
+                    0,
+                    lambda message=error_message: messagebox.showerror(
+                        "เกิดข้อผิดพลาด", message
+                    )
+                )
 
         finally:
 
-            self.root.after(
-                0,
-                self._load_finished
-            )
+            if not self.closing:
+
+                self.root.after(
+                    0,
+                    self._load_finished
+                )
 
 
     def _load_finished(self):
@@ -1781,7 +1815,8 @@ class DownloaderApp:
             state="disabled"
         )
 
-        threading.Thread(
+        self.cancel_event.clear()
+        self.worker_thread = threading.Thread(
             target=self._download_worker,
             args=(
                 courses,
@@ -1789,7 +1824,8 @@ class DownloaderApp:
                 download_via_proxy
             ),
             daemon=True
-        ).start()
+        )
+        self.worker_thread.start()
 
 
     # ========================================================
@@ -2038,6 +2074,10 @@ class DownloaderApp:
 
             for course in courses:
 
+                if self.cancel_event.is_set():
+                    self.log("ยกเลิกการดาวน์โหลด")
+                    break
+
                 subject_id = course.get(
                     "subject_id",
                     ""
@@ -2096,6 +2136,9 @@ class DownloaderApp:
                 # ------------------------------------------------
 
                 for content in content_data:
+
+                    if self.cancel_event.is_set():
+                        break
 
                     content_name = (
                         str(content.get("$id", ""))
@@ -2172,6 +2215,9 @@ class DownloaderApp:
 
                     for teacher in teachers:
 
+                        if self.cancel_event.is_set():
+                            break
+
                         teacher_name = teacher.get(
                             "teacher_name",
                             ""
@@ -2245,6 +2291,9 @@ class DownloaderApp:
                         # ----------------------------------------
 
                         for video in videos:
+
+                            if self.cancel_event.is_set():
+                                break
 
                             docfile = video.get(
                                 "document_subject_doc",
@@ -2322,24 +2371,30 @@ class DownloaderApp:
                                 )
 
 
-            self.log(
-                "\n===== เสร็จสิ้นการดาวน์โหลดรายการที่เลือก ====="
-            )
+            if not self.closing:
+
+                self.log(
+                    "\n===== เสร็จสิ้นการดาวน์โหลดรายการที่เลือก ====="
+                )
 
 
         except Exception as exc:
 
-            self.log(
-                f"เกิดข้อผิดพลาดระหว่างทำงาน: {exc}"
-            )
+            if not self.closing:
+
+                self.log(
+                    f"เกิดข้อผิดพลาดระหว่างทำงาน: {exc}"
+                )
 
 
         finally:
 
-            self.root.after(
-                0,
-                self._download_finished
-            )
+            if not self.closing:
+
+                self.root.after(
+                    0,
+                    self._download_finished
+                )
 
 
     # ========================================================
@@ -2365,32 +2420,43 @@ class DownloaderApp:
 
     def on_close(self):
 
-        if self.download_running or self.load_running:
-            messagebox.showwarning(
-                "กำลังทำงาน",
-                "กรุณารอให้การโหลดหรือดาวน์โหลดเสร็จก่อนปิดโปรแกรม"
-            )
-            return
+        # 1. ตั้งค่า closing flag ก่อน เพื่อป้องกัน GUI callback ใหม่
+        self.closing = True
 
-        # ปิดเฉพาะ Proxy ที่โปรแกรมเป็นผู้เปิดเอง
-        # ห้ามปิด External Proxy เด็ดขาด
+        # 2. สั่งยกเลิกงานที่ค้าง (worker จะเช็ค cancel_event)
+        self.cancel_event.set()
 
+        self.log(
+            "[Exit] กำลังยกเลิกงานและปิดโปรแกรม..."
+        )
+
+        # 3. หยุด Proxy ที่โปรแกรมสร้างเอง (External Proxy ห้ามแตะ)
         if (
             self.proxy_process is not None
             and not self.proxy_external
         ):
+            try:
+                self.stop_proxy()
+            except Exception:
+                pass
 
-            self.stop_proxy()
+        # 4. รอให้ worker thread จบ (สูงสุด 3 วินาที)
+        worker = self.worker_thread
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=3)
 
-        else:
+        # 5. ล้างคิว log
+        try:
+            while True:
+                self.log_queue.get_nowait()
+        except queue.Empty:
+            pass
 
-            if self.proxy_external:
-
-                self.log(
-                    "[Exit] External Proxy จะไม่ถูกปิด"
-                )
-
-        self.root.destroy()
+        # 6. ปิดหน้าต่าง
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
 
 # ============================================================
