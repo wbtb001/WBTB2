@@ -1,6 +1,6 @@
 
 # ============================================================
-# weDownloader_v06.py
+# weDownloader_v11.py
 #
 # We Plus Downloader - GUI Version
 #
@@ -14,6 +14,10 @@
 # ============================================================
 # CHANGELOG
 # ============================================================
+#
+# v11
+# - Load Token API credentials from wefileuser.txt beside the script.
+# - Keep environment variables as a fallback when the file is absent.
 #
 # v10
 # - Use the local listening port to confirm a managed Proxy starts.
@@ -100,7 +104,7 @@ import requests
 # CONFIGURATION
 # ============================================================
 
-APP_VERSION = "weDownloader_v10"
+APP_VERSION = "weDownloader_v11"
 
 PROXY_EXE = "opera-proxy.windows-amd64.exe"
 PROXY_URL = "http://127.0.0.1:18080"
@@ -118,6 +122,40 @@ DOWNLOAD_TIMEOUT = (20, 180)
 
 TOKEN_USERNAME_ENV = "WEDOWNLOADER_TOKEN_USERNAME"
 TOKEN_PASSWORD_ENV = "WEDOWNLOADER_TOKEN_PASSWORD"
+TOKEN_CREDENTIALS_FILE = "wefileuser.txt"
+TOKEN_USERNAME = None
+TOKEN_PASSWORD = None
+
+
+def load_token_credentials():
+
+    credentials_path = (
+        Path(__file__).resolve().parent
+        / TOKEN_CREDENTIALS_FILE
+    )
+
+    if credentials_path.is_file():
+
+        lines = credentials_path.read_text(
+            encoding="utf-8-sig"
+        ).splitlines()
+
+        if (
+            len(lines) < 2
+            or not lines[0].strip()
+            or not lines[1].strip()
+        ):
+            raise ValueError(
+                f"{TOKEN_CREDENTIALS_FILE} must contain a username "
+                "on line 1 and a password on line 2"
+            )
+
+        return lines[0].strip(), lines[1].strip()
+
+    return (
+        os.environ.get(TOKEN_USERNAME_ENV),
+        os.environ.get(TOKEN_PASSWORD_ENV)
+    )
 
 
 # ============================================================
@@ -436,9 +474,9 @@ class DownloaderApp:
 
         self.log("=" * 55)
         self.log(f"{APP_VERSION} started")
-        self.log("CHANGELOG v10:")
-        self.log("- Proxy startup is confirmed by its local listener")
-        self.log("- Upstream connectivity is checked separately")
+        self.log("CHANGELOG v11:")
+        self.log("- Token credentials are loaded from wefileuser.txt")
+        self.log("- Environment variables remain supported as fallback")
         self.log("=" * 55)
 
         # ตรวจสอบ Proxy หลังจากสร้าง GUI แล้ว
@@ -1772,13 +1810,14 @@ class DownloaderApp:
                 "กำลังขอ Token ใหม่..."
             )
 
-            username = os.environ.get(TOKEN_USERNAME_ENV)
-            password = os.environ.get(TOKEN_PASSWORD_ENV)
+            username = TOKEN_USERNAME
+            password = TOKEN_PASSWORD
 
             if not username or not password:
                 raise RuntimeError(
-                    "Set both WEDOWNLOADER_TOKEN_USERNAME and "
-                    "WEDOWNLOADER_TOKEN_PASSWORD before downloading"
+                    "Add a username on line 1 and a password on line 2 "
+                    f"of {TOKEN_CREDENTIALS_FILE}, or set both "
+                    f"{TOKEN_USERNAME_ENV} and {TOKEN_PASSWORD_ENV}"
                 )
 
             response = self.request(
@@ -2359,6 +2398,18 @@ class DownloaderApp:
 # ============================================================
 
 if __name__ == "__main__":
+
+    try:
+        TOKEN_USERNAME, TOKEN_PASSWORD = load_token_credentials()
+    except (OSError, ValueError) as exc:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "อ่านข้อมูล Token ไม่สำเร็จ",
+            str(exc)
+        )
+        root.destroy()
+        raise SystemExit(1)
 
     root = tk.Tk()
 
