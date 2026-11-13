@@ -1,7 +1,7 @@
 
 # ============================================================
-# weDownloader_v11.py
-#
+# weDownloader_v12.py
+# 
 # We Plus Downloader - GUI Version
 #
 # Requirements:
@@ -112,7 +112,7 @@ import requests
 # CONFIGURATION
 # ============================================================
 
-APP_VERSION = "weDownloader_v11"
+APP_VERSION = "weDownloader_v12"
 
 PROXY_EXE = "opera-proxy.windows-amd64.exe"
 PROXY_URL = "http://127.0.0.1:18080"
